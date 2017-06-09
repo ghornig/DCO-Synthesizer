@@ -24,11 +24,17 @@
 #define CV5 0xb01111
 #define GATES 0xb10000
 
+// Audio clock as opposed to actual system clock
+#define A_CLK_SPD 4000000
+
+static int CVslope;
+static int CVintercept;
+
 /* Relevant Parts List:
 
 ATMEGA8-P
 Intersil 82C54 (Digikey#: CP82C54Z-ND) - 3 in 1 counters
-8 MHz synthesizer clock (seperate from microprocessor crystal) - (Digikey#: 535-9184-5-ND)
+4 MHz synthesizer clock (seperate from microprocessor crystal)
 8 Bit Transparent D Latch - (Digikey#: SN74HC373N)
 All of the basic digital stuff (shift registers, logic, memory) are just the texas instruments SN74XXXXX series. You can look these up. They're pretty standard. Same stuff from ECE 210.
 TI DAC0800
@@ -144,8 +150,7 @@ Keyboard Note Num	Note	Freq (Hz)
 
 */
 
-With a 4 MHz master clock
-
+// With a 4 MHz master clock, pregenerated in excel:
 static int notefreqs[] = {
 61152,
 57720,
@@ -210,6 +215,14 @@ static int notefreqs[] = {
 1911,
 1333,
  };
+ 
+int newKeys[6];
+int tosetKeys[6];
+int toaddKeys[6];
+int currentKeys[6];
+int currentFreqs[6];
+int currentCVs[6];
+
  
 int main(void) {
 	
@@ -288,10 +301,7 @@ int main(void) {
 		setOSCCV();
 		setOSCGate();
 		
-	}
-	
-		
-		
+	}		
 	
 }
 
@@ -340,13 +350,14 @@ int readKeys(void) {
 	setCTRLCLK(0);
 	
 	setAddress(KEYSR);
-	[make data 7 through 2 inputs, since this should be default state might not be neccesary]
-	[make data 1 through 0 outputs.]
+	// Still to do:
+	// [make data 7 through 2 inputs, since this should be default state might not be neccesary]
+	// [make data 1 through 0 outputs.]
 
 	setCTRLCLK(1);
 	
 	// Index for newKeys
-	j = 0;
+	int j = 0;
 	
 	// Actually go through the keys here:
 	for (int i=0;i<10;i++) {
@@ -450,11 +461,11 @@ int setOSC(void) {
 int setOSCCV(void) {
 	// Sets all of the control voltages on each oscillator	
 	
-	currentCVs = keytoCV(currentKeys);
-	
 	for (i=0;i<5;i++) {
+		currentCV = countertoCV(notefreqs[currentKeys[i]])
+		// Missing here: Conversion from CV to CV binary entry...requires testing and calibration of DAC
 		setAddress(CV0+i);
-		setData(-1,currentCVs[i]);
+		setData(-1,currentCVbinary[i]);
 		setCTRLCLK(1);
 		setCTRLCLK(0);
 	}
@@ -478,13 +489,20 @@ int setOSCGate(void) {
 	
 }
 
-int keytoCV(keynum) {
+
+// Maybe for all of this stuff the key numbers should first be translated to a frequency, and then all of the work can be done on the frequencies?
+
+int countertoCV(counterval) {
 	// Takes a key number and returns the proper binary setting for the control voltage on the chip
 	
-}
-
-int keytoBinary(keynum) {
-	// Takes a key number and returns the proper counter binary setting
+	// Experimental calibration gives a linear curve fit for
+	float CVslope = -1.68E-3;
+	float CVintercept = 4.62E-2;
+	// You could have a table lookup, but it might be easier to just do the calculation since I was able to find this trend over a large frequency range with 7 experimental data points
+			
+	float voltagesetting = CVslope*(A_CLK_SPD/counterval) + CVintercept;
+	
+	// This next part all depends on how the DAC works which still needs to be tested...
 	
 	
 }
@@ -509,22 +527,137 @@ int setSR(datapin,clockpin,value) {
 }
 
 int setTritone(trinum) {
-	// Configures the SR to set a particular tritone
+	// Configures the SR to set a particular tritone for reading the keyboard
 	
 	setSR(...);
 	
 }
 
 int readData(datapin) {
-	// General use, Returns the value of a particular data pin. Should return an error if an attempt to read is made on a pin set to output.
+	// General use, Returns the value of a particular data pin. Should return an error if an attempt to read is made on a pin set to output (?).
+	
+/* 	PortB 5 - Data bus 0
+	PortB 4 - Data bus 1
+	PortB 3 - Data bus 2
+	PortB 2 - Data bus 3
+	PortB 1 - Data bus 4
+	PortB 0 - Data bus 5
+	PortD 7 - Data bus 6
+	PortD 6 - Data bus 7	 */
+	
+	
+	switch (datapin) {
+		
+		case 0:	
+		// 0 means input...did I bit mask this right?
+		DDRB |= (0<<5);
+		// Also...is this the proper way to reference this?
+		return PORTB[PORTB5];
+		break;
+		
+		case 1:
+		DDRB |= (0<<4);
+		return PORTB[PORTB4];
+		break;
+		
+		case 2:
+		DDRB |= (0<<3);
+		return PORTB[PORTB3];
+		break;
+		
+		case 3:
+		DDRB |= (0<<2);
+		return PORTB[PORTB2];
+		break;
+		
+		case 4:
+		DDRB |= (0<<1);
+		return PORTB[PORTB1];
+		break;
+		
+		case 5:
+		DDRB |= (0<<0);
+		return PORTB[PORTB0];
+		break;
+		
+		case 6:
+		DDRD |= (0<<7);
+		return PORTD[PORTD7];
+		break;
+		
+		case 7:
+		DDRD |= (0<<6);
+		return PORTD[PORTD6];
+		break;
+		
+	}
+	
 }
 
 int setData(bitbyte,data) {
-	// General use, lets you set either a particular pin on the databus or all of them at once.
+	// General use, lets you set either a particular pin on the databus or all of them at once. (as outputs)
 	// bitbyte = -1 for a whole byte, or the number of the bit for a particular pin (0-7)
+		
+		switch (bitbyte) {
+		
+		case -1:
+		PORTB[PORTB5] = data[0];
+		PORTB[PORTB4] = data[1];
+		PORTB[PORTB3] = data[2];
+		PORTB[PORTB2] = data[3];
+		PORTB[PORTB1] = data[4];
+		PORTB[PORTB0] = data[5];
+		PORTD[PORTD7] = data[6];
+		PORTD[PORTD6] = data[7];
+		break;
+		
+		case 0:	
+		DDRB |= (1<<5);
+		//PORTB &= ~(1<<PORTB5);
+		// Why not just...
+		PORTB[PORTB5] = data;
+		break;
+		
+		case 1:
+		DDRB |= (1<<4);
+		PORTB[PORTB4] = data;
+		break;
+		
+		case 2:
+		DDRB |= (1<<3);
+		PORTB[PORTB3] = data;
+		break;
+		
+		case 3:
+		DDRB |= (1<<2);
+		PORTB[PORTB2] = data;
+		break;
+		
+		case 4:
+		DDRB |= (1<<1);
+		PORTB[PORTB1] = data;
+		break;
+		
+		case 5:
+		DDRB |= (1<<0);
+		PORTB[PORTB0] = data;
+		break;
+		
+		case 6:
+		DDRD |= (1<<7);
+		PORTD[PORTD7] = data;
+		break;
+		
+		case 7:
+		DDRD |= (1<<6);
+		PORTD[PORTD6] = data;
+		break;
+		
+	}
 }
 
 int setCTRLCLK(val) {
 	// General use, Sets the control clock pin either low or high.
-	
+	PORTD[PORTD3] = val;
+	// I think that's all you need?
 }
